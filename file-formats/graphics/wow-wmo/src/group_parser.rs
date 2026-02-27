@@ -201,7 +201,13 @@ pub fn parse_group_file<R: Read + Seek>(
                 // MOGP contains sub-chunks - we need to parse them
                 // The remaining chunk data contains nested chunks
                 // MogpHeader is 68 bytes when serialized (not std::mem::size_of due to Vec fields)
-                let data_size = chunk_info.size - 68;
+                let declared_size = chunk_info.size.saturating_sub(68);
+                // Clamp to actual remaining data (file may be truncated)
+                let pos = reader.stream_position()?;
+                let end = reader.seek(SeekFrom::End(0))?;
+                reader.seek(SeekFrom::Start(pos))?;
+                let available = (end - pos) as u32;
+                let data_size = declared_size.min(available);
                 let mut data_reader = std::io::Cursor::new(read_chunk_data(reader, data_size)?);
 
                 // Parse nested chunks within MOGP
@@ -244,7 +250,7 @@ pub fn parse_group_file<R: Read + Seek>(
             }
             "MOBA" => {
                 // Read render batches
-                let count = chunk_info.size / 16; // Each batch is 16 bytes
+                let count = chunk_info.size / 24; // Each MobaEntry is 24 bytes
                 for _ in 0..count {
                     group.render_batches.push(MobaEntry::read(reader)?);
                 }
@@ -422,7 +428,6 @@ fn parse_nested_chunks<R: Read + Seek>(
 
         let chunk_id = header.id.as_str();
         let chunk_size = header.size;
-
         // Check if we have enough remaining data for this chunk
         let remaining_data = end_pos - reader.stream_position()?;
         if chunk_size as u64 > remaining_data {
